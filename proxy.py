@@ -1,3 +1,4 @@
+import datetime
 import socket
 import time
 from threading import Thread
@@ -65,7 +66,7 @@ def forwardConnection(client):
     # print('Entered forwardRequest()')
     requestText = getRequestText(client)
     HttpType, requestHost, requestPort = getRequestType(requestText)
-    waitingToStartMember = HttpType + ', ' + requestHost + ', ' + str(requestPort)
+    waitingToStartMember = "[{}] {}, {}:{}".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort)
     print(waitingToStartMember)
     waitingToStart.append(waitingToStartMember)
 
