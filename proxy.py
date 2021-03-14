@@ -1,5 +1,6 @@
 import datetime
 import socket
+import time
 from threading import Thread
 
 HOST = ''
@@ -9,6 +10,8 @@ cache = {}
 blacklist = []
 totalTX = 0
 totalRX = 0
+avgTime = 0
+avgN = 0
 
 def getRequestText(conn):
     requestText = ""
@@ -53,18 +56,28 @@ def getHttpInfo(requestText):
     return HttpType, HttpURL, requestHost, requestPort
 
 def clientToServer(client, server, serverHost, serverPort, addr, mmc):
+    global totalTX, avgTime, avgN
     server.settimeout(60 * 5)
     while True:
         if serverHost not in blacklist:
             try:
+                start = time.time()
+
                 data = client.recv(BUFF_SIZE)
                 server.sendall(data)
 
                 # Report
-                formatted = str(len(data) // 1000) + " KB" if len(data) > 1000 else str(len(data)) + " B"
+                duration = time.time() - start
                 if len(data) > 0:
-                    report = "[{}] HTTPS Encrypted packet\n      {}:{} -> {}:{}\n      Client to server (TX): {:6s}\n".format(datetime.datetime.now().time(), addr[0], addr[1], serverHost, serverPort, formatted)
+                    formatted = str(len(data) // 1000) + " KB" if len(data) > 1000 else str(len(data)) + " B"
+                    report = "[{}] HTTPS Encrypted packet\n      {}:{} -> {}:{}\n      Client to server (TX): {:6s}, duration: {:.0f} ms\n".format(datetime.datetime.now().time(), addr[0], addr[1], serverHost, serverPort, formatted, duration * 1000)
                     mmc.updateOutput(report)
+
+                    # Stats
+                    totalTX += len(data)
+                    avgTime = (duration + (avgN * avgTime)) / (avgN + 1)
+                    avgN += 1
+
             except BlockingIOError:
                 pass
             except ConnectionResetError:
@@ -75,18 +88,27 @@ def clientToServer(client, server, serverHost, serverPort, addr, mmc):
                 break
 
 def serverToClient(server, client, serverHost, serverPort, addr, mmc):
+    global totalRX, avgTime, avgN
     server.settimeout(60 * 5)
     while True:
         if serverHost not in blacklist:
             try:
+                start = time.time()
                 data = server.recv(BUFF_SIZE)
                 client.sendall(data)
 
                 # Report
-                formatted = str(len(data) // 1000) + " KB" if len(data) > 1000 else str(len(data)) + " B"
+                duration = time.time() - start
                 if len(data) > 0:
-                    report = "[{}] HTTPS Encrypted packet\n      {}:{} -> {}:{}\n      Server to client (RX): {:6s}\n".format(datetime.datetime.now().time(), serverHost, serverPort, addr[0], addr[1], formatted)
+                    formatted = str(len(data) // 1000) + " KB" if len(data) > 1000 else str(len(data)) + " B"
+                    report = "[{}] HTTPS Encrypted packet\n      {}:{} -> {}:{}\n      Server to client (RX): {:6s}, duration: {:.0f} ms\n".format(datetime.datetime.now().time(), serverHost, serverPort, addr[0], addr[1], formatted, duration * 1000)
                     mmc.updateOutput(report)
+
+                    # Stats
+                    totalRX += len(data)
+                    avgTime = (duration + (avgN * avgTime)) / (avgN + 1)
+                    avgN += 1
+
             except BlockingIOError:
                 pass
             except ConnectionResetError:
@@ -97,8 +119,10 @@ def serverToClient(server, client, serverHost, serverPort, addr, mmc):
                 break
 
 def forwardConnection(client, addr, mmc):
-    global HttpsCount, HttpCount, cache, blacklist
+    start = time.time()
+    global HttpsCount, HttpCount, cache, blacklist, avgTime, avgN, totalRX
 
+    # Parse the client's request
     requestText = getRequestText(client)
     HttpType, HttpUrl, requestHost, requestPort = getHttpInfo(requestText)
 
@@ -121,27 +145,48 @@ def forwardConnection(client, addr, mmc):
     serversock.setblocking(0)
 
 
+    # Https connection
     report = ''
     if HttpType == 'CONNECT':
+        # Required for Https connections
         client.sendall("HTTP/1.1 200 OK \r\n\r\n".encode('ISO-8859-1'))
 
+        # Start up two threads for server client communication
         serverThread = Thread(target=serverToClient, args=(serversock, client, requestHost, requestPort, addr, mmc, ))
         serverThread.start()
-
         clientThread = Thread(target=clientToServer, args=(client, serversock, requestHost, requestPort, addr, mmc, ))
         clientThread.start()
 
-        report = "[{}] HTTPS CONNECT\n      {}:{} -> {}".format(datetime.datetime.now().time(), addr[0], addr[1], HttpUrl)
+        # Report
+        duration = time.time() - start
+        report = "[{}] HTTPS CONNECT\n      {}:{} -> {}\n".format(datetime.datetime.now().time(), addr[0], addr[1], HttpUrl)
+        report += "      Client to server (TX) 0 B, duration: {:.0f} s".format(duration * 1000)
+        mmc.updateOutput(report)
+
+        # Stats
+        avgTime = (duration + (avgN * avgTime)) / (avgN + 1)
+        avgN += 1
+
     else:
-        report = "[{}] HTTP {}\n      {}:{} -> {}".format(datetime.datetime.now().time(), HttpType, addr[0], addr[1], HttpUrl)
+        # Http connection
+        report = "[{}] HTTP {}\n      {} -> {}:{}".format(datetime.datetime.now().time(), HttpType, HttpUrl, addr[0], addr[1])
 
         # Cache stuff
         requestId = requestText.split("\n")[0]
         if requestId in cache:
-            report += "\n      Server to client (RX) 0 B"
-            report += "\n      CACHE HIT"
             client.sendall(cache[requestId])
+
+            # Stats
+            duration = time.time() - start
+            avgTime = (duration + (avgN * avgTime)) / (avgN + 1)
+            avgN += 1
+
+            # Report
+            report += "\n      Server to client (RX) 0 B, duration: {:.0f} ms".format(duration * 1000)
+            report += "\n      CACHE HIT\n"
+            mmc.updateOutput(report)
         else:
+            # Make the HTTP request
             response = ""
             serversock.sendall(requestText.encode())
             stillreceiving = True
@@ -157,6 +202,7 @@ def forwardConnection(client, addr, mmc):
                 except BlockingIOError:
                     pass
 
+            # Send the server's response to the client
             encodedResponse = response.encode('ISO-8859-1')
             client.sendall(encodedResponse)
 
@@ -165,11 +211,15 @@ def forwardConnection(client, addr, mmc):
 
             # Report
             formatted = str(len(response) // 1000) + " KB" if len(response) > 1000 else str(len(response)) + " B"
+            duration = time.time() - start
+            report += "\n      Server to client (RX) {} , duration: {:.0f} ms".format(formatted, duration * 1000)
+            report += "\n      CACHE MISS\n"
+            mmc.updateOutput(report)
 
-            report += "\n      Server to client (RX) " + formatted
-            report += "\n      CACHE MISS"
-
-    mmc.updateOutput(report + "\n")
+            # Stats
+            avgTime = (duration + (avgN * avgTime)) / (avgN + 1)
+            avgN += 1
+            totalRX += len(response)
 
 def main(mmc):
     global HOST, PORT
