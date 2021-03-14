@@ -7,6 +7,8 @@ HOST = ''
 PORT = 4000
 BUFF_SIZE = 65536
 waitingToStart = []
+cache = {}
+blacklist = ['www.youtube.com']
 
 def getRequestText(conn):
     start = time.time()
@@ -28,7 +30,7 @@ def getRequestText(conn):
 
     # print('Got a (hopefully) http request:\n{}'.format(requestText))
     diff = time.time() - start
-    if diff > 0.6: print("Request collection took " + diff + " seconds")
+    if diff > 0.6: print("Request collection took {} seconds".format(diff))
 
     return requestText
 
@@ -37,7 +39,7 @@ def getRequestType(requestText):
     # print('Entering getRequestType()')
     if requestText == '':
         # print('requestText was empty')
-        return None
+        return None, None, None
 
     # If it's an HTTP request
     requestLines = requestText.split('\n')
@@ -59,39 +61,12 @@ def getRequestType(requestText):
 
     return HttpType, requestHost, requestPort
 
-def forwardConnection(client):
-    start = time.time()
-    global waitingToStart
-    # print("Connections waiting to start: {}".format(waitingToStart))
-    # print('Entered forwardRequest()')
-    requestText = getRequestText(client)
-    HttpType, requestHost, requestPort = getRequestType(requestText)
-    waitingToStartMember = "[{}] {}, {}:{}".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort)
-    print(waitingToStartMember)
-    waitingToStart.append(waitingToStartMember)
-
-    # print(requestText)
-    serversock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    if HttpType == 'CONNECT':
-        # print('We\'ve got a CONNECT request')
-        client.sendall("HTTP/1.1 200 OK \r\n\r\n".encode('ISO-8859-1'))
-
-    serversock.connect((requestHost, requestPort))
-    serversock.setblocking(0)
-
-    # print('Connecting to {}:{}'.format(requestHost, requestPort))
-
-    waitingToStart.remove(waitingToStartMember)
-    # print("Connection completed, remaining: {}".format(len(waitingToStart)))
-    # repetitions = 0
-    diff = time.time() - start
-    if diff > 0.6: print("Connection took " + diff + " seconds")
+def clientToServer(client, server):
+    server.settimeout(60 * 5)
     while True:
-        somethingDone = False
         try:
             data = client.recv(BUFF_SIZE)
-            serversock.sendall(data)
+            server.sendall(data)
             # if len(data.decode('ISO-8859-1')) > 1:
             #     somethingDone = True
         except BlockingIOError:
@@ -99,10 +74,13 @@ def forwardConnection(client):
         except ConnectionResetError:
             break
         except BrokenPipeError:
-            break
+            pass
 
+def serverToClient(server, client):
+    server.settimeout(60 * 5)
+    while True:
         try:
-            data = serversock.recv(BUFF_SIZE)
+            data = server.recv(BUFF_SIZE)
             client.sendall(data)
             # if len(data.decode('ISO-8859-1')) > 1:
             #     somethingDone = True
@@ -111,14 +89,82 @@ def forwardConnection(client):
         except ConnectionResetError:
             break
         except BrokenPipeError:
-            break
+            pass
 
-        # if somethingDone:
-        #     repetitions += 1
-        #     print("Connection repetitions: {}".format(repetitions))
+def forwardConnection(client):
+    start = time.time()
+    global waitingToStart, HttpsCount, HttpCount, cache, blacklist
+    # print('Entered forwardRequest()')
+    requestText = getRequestText(client)
+    HttpType, requestHost, requestPort = getRequestType(requestText)
 
-    serversock.close()
-    client.close()
+    # Request body was empty
+    if HttpType is None:
+        client.close()
+        return
+
+    if requestHost in blacklist:
+        print("[{}] {}, {}:{} (blacklisted)".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort))
+        client.close()
+        return
+
+    waitingToStartMember = "[{}] {}, {}:{}".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort)
+
+    print(waitingToStartMember)
+    waitingToStart.append(waitingToStartMember)
+
+    # print("Connections waiting to start: {}".format(waitingToStart))
+
+    # print(requestText)
+    serversock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    serversock.connect((requestHost, requestPort))
+    serversock.setblocking(0)
+
+    if HttpType == 'CONNECT':
+        # print('We\'ve got a CONNECT request')
+        client.sendall("HTTP/1.1 200 OK \r\n\r\n".encode('ISO-8859-1'))
+    else:
+        # Cache stuff
+        requestId = requestText.split("\n")[0]
+        if requestId in cache:
+            print("Cache hit")
+            client.sendall(cache[requestId])
+        else:
+            print("Cache miss")
+
+            response = ""
+            serversock.sendall(requestText.encode())
+            stillreceiving = True
+            while stillreceiving:
+                try:
+                    data = serversock.recv(BUFF_SIZE)
+                    if data == b'':
+                        stillreceiving = False
+                    else:
+                        response += data.decode('ISO-8859-1')
+                    if data.decode('ISO-8859-1').endswith('\r\n\r\n'):
+                        stillreceiving = False
+                except BlockingIOError:
+                    pass
+            encodedResponse = response.encode('ISO-8859-1')
+            client.sendall(encodedResponse)
+
+            # Add this request to the cache
+            cache[requestId] = encodedResponse
+
+    # print('Connecting to {}:{}'.format(requestHost, requestPort))
+
+    waitingToStart.remove(waitingToStartMember)
+    # print("Connection completed, remaining: {}".format(len(waitingToStart)))
+    # repetitions = 0
+    diff = time.time() - start
+    if diff > 0.6: print("Connection took {} seconds".format(diff))
+
+    serverThread = Thread(target=serverToClient, args=(serversock, client,))
+    serverThread.start()
+
+    clientThread = Thread(target=clientToServer, args=(client, serversock,))
+    clientThread.start()
 
 if __name__ == "__main__":
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
