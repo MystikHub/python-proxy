@@ -6,9 +6,9 @@ To do:
 - [X]  Respond to HTTP requests
 - [X]  Respond to HTTPS requests
 - [X]  Display requests on the management console
-- [ ]  Support for websocket connections
-- [ ]  URL blacklist
-- [ ]  Cache for HTTP requests
+- [X]  Support for websocket connections
+- [X]  URL blacklist
+- [X]  Cache for HTTP requests
 - [ ]  Timing and bandwidth data for cache interactions
 - [X]  Use separate threads for requests
 - [ ]  High level description of the protocol design and implementation
