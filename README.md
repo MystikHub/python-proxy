@@ -2,7 +2,8 @@
 A simple proxy written in python, submission for a college assignment
 
 To do:
-- [ ]  User interface
+- [X]  User interface
+- [ ]  Clean up code
 - [X]  Respond to HTTP requests
 - [X]  Respond to HTTPS requests
 - [X]  Display requests on the management console
