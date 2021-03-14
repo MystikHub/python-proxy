@@ -1,6 +1,7 @@
 import subprocess
 import npyscreen
 import proxy
+import time
 from threading import Thread
 
 class ManagementConsole(npyscreen.NPSAppManaged):
@@ -20,6 +21,8 @@ class MainForm(npyscreen.ActionForm):
         self.output = self.add(npyscreen.MultiLineEdit, name="Output", value="", editable=False)
 
     def on_ok(self):
+        # Terminal freaks out without a sleep here
+        time.sleep(0.1)
         raise KeyboardInterrupt
 
     def updateBlacklist(self):
