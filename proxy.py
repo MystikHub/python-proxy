@@ -75,6 +75,8 @@ def clientToServer(client, server):
             break
         except BrokenPipeError:
             pass
+        except socket.timeout:
+            break
 
 def serverToClient(server, client):
     server.settimeout(60 * 5)
@@ -90,8 +92,10 @@ def serverToClient(server, client):
             break
         except BrokenPipeError:
             pass
+        except socket.timeout:
+            break
 
-def forwardConnection(client):
+def forwardConnection(client, mmc):
     start = time.time()
     global waitingToStart, HttpsCount, HttpCount, cache, blacklist
     # print('Entered forwardRequest()')
@@ -104,13 +108,15 @@ def forwardConnection(client):
         return
 
     if requestHost in blacklist:
-        print("[{}] {}, {}:{} (blacklisted)".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort))
+        text = "[{}] {}, {}:{} (blacklisted)".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort)
+        mmc.updateOutput(text)
         client.close()
         return
 
     waitingToStartMember = "[{}] {}, {}:{}".format(datetime.datetime.now().time(), HttpType, requestHost, requestPort)
 
-    print(waitingToStartMember)
+    # print(waitingToStartMember)
+    mmc.updateOutput(waitingToStartMember)
     waitingToStart.append(waitingToStartMember)
 
     # print("Connections waiting to start: {}".format(waitingToStart))
@@ -127,10 +133,12 @@ def forwardConnection(client):
         # Cache stuff
         requestId = requestText.split("\n")[0]
         if requestId in cache:
-            print("Cache hit")
+            # print("Cache hit")
+            mmc.updateOutput("Cache hit")
             client.sendall(cache[requestId])
         else:
-            print("Cache miss")
+            # print("Cache miss")
+            mmc.updateOutput("Cache miss")
 
             response = ""
             serversock.sendall(requestText.encode())
@@ -158,7 +166,7 @@ def forwardConnection(client):
     # print("Connection completed, remaining: {}".format(len(waitingToStart)))
     # repetitions = 0
     diff = time.time() - start
-    if diff > 0.6: print("Connection took {} seconds".format(diff))
+    # if diff > 0.6: print("Connection took {} seconds".format(diff))
 
     serverThread = Thread(target=serverToClient, args=(serversock, client,))
     serverThread.start()
@@ -166,7 +174,8 @@ def forwardConnection(client):
     clientThread = Thread(target=clientToServer, args=(client, serversock,))
     clientThread.start()
 
-if __name__ == "__main__":
+def main(mmc):
+    global HOST, PORT
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
@@ -174,5 +183,5 @@ if __name__ == "__main__":
         while True:
             conn, addr = s.accept()
             conn.setblocking(0)
-            request = Thread(target=forwardConnection, args=(conn, ))
+            request = Thread(target=forwardConnection, args=(conn, mmc, ))
             request.start()
