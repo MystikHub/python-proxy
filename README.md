@@ -1,6 +1,8 @@
 # Python proxy
 A simple proxy written in python, submission for a college assignment
 
+To start the server, run `python proxy.py`.
+
 Features:
 - Easy to use terminal user interface
 - Responds to HTTP and HTTPS requests
@@ -19,6 +21,6 @@ To do:
 - [X]  Cache for HTTP requests
 - [X]  Timing and bandwidth data for cache interactions
 - [X]  Use separate threads for requests
-- [ ]  High level description of the protocol design and implementation
-- [ ]  PDF with documentation and code
+- [X]  High level description of the protocol design and implementation
+- [X]  PDF with documentation and code
 - [X]  Video demonstration

@@ -5,7 +5,7 @@ from threading import Thread
 
 HOST = ''
 PORT = 4000
-BUFF_SIZE = 65536
+BUFF_SIZE = 65536   # Maximum TCP packet size
 cache = {}
 blacklist = []
 totalTX = 0
@@ -13,17 +13,24 @@ totalRX = 0
 avgTime = 0
 avgN = 0
 
+# Listens to the client for a full HTTP(S) request
 def getRequestText(conn):
     requestText = ""
 
+    # Keep listening...
     stillreceiving = True
     while stillreceiving:
         try:
+            # and recording data until...
             data = conn.recv(BUFF_SIZE)
+            # we get no data or
             if data == b'':
                 stillreceiving = False
             else:
+                # record the data and continue
                 requestText += data.decode('ISO-8859-1')
+            # Alternate stopping condition: we reached the end
+            #   of the request
             if data.decode('ISO-8859-1').endswith("\r\n\r\n"):
                 stillreceiving = False
         except BlockingIOError:
@@ -31,6 +38,8 @@ def getRequestText(conn):
 
     return requestText
 
+# Parses the request text and returns:
+#   The HTTP method, HTTP URL, host, and port of the request
 def getHttpInfo(requestText):
 
     # Request text was empty
@@ -41,7 +50,7 @@ def getHttpInfo(requestText):
     requestLines = requestText.split('\n')
     firstLineSplit = requestLines[0].split()
 
-    # Http method
+    # Http method and URL
     HttpType = firstLineSplit[0]
     HttpURL = firstLineSplit[1]
 
@@ -55,14 +64,18 @@ def getHttpInfo(requestText):
 
     return HttpType, HttpURL, requestHost, requestPort
 
+# Forwards all packets from the client to the server
 def clientToServer(client, server, serverHost, serverPort, addr, mmc):
     global totalTX, avgTime, avgN
+    # Set up a timeout of 5 minutes
     server.settimeout(60 * 5)
+    # Loop as long as packets are being sent or 5 minutes of inactivity pass
     while True:
         if serverHost not in blacklist:
             try:
                 start = time.time()
 
+                # Read the packet contents from the client
                 data = client.recv(BUFF_SIZE)
                 server.sendall(data)
 
@@ -84,9 +97,11 @@ def clientToServer(client, server, serverHost, serverPort, addr, mmc):
                 break
             except BrokenPipeError:
                 pass
+            # Break the loop after a timeout
             except socket.timeout:
                 break
 
+# Identical to clientToServer. See above for more details
 def serverToClient(server, client, serverHost, serverPort, addr, mmc):
     global totalRX, avgTime, avgN
     server.settimeout(60 * 5)
@@ -118,6 +133,8 @@ def serverToClient(server, client, serverHost, serverPort, addr, mmc):
             except socket.timeout:
                 break
 
+# For each connection, this function is called on a new thread
+# Features HTTP caching, blacklisting, and statistics on proxied connections
 def forwardConnection(client, addr, mmc):
     start = time.time()
     global HttpsCount, HttpCount, cache, blacklist, avgTime, avgN, totalRX
@@ -172,8 +189,11 @@ def forwardConnection(client, addr, mmc):
         report = "[{}] HTTP {}\n      {} -> {}:{}".format(datetime.datetime.now().time(), HttpType, HttpUrl, addr[0], addr[1])
 
         # Cache stuff
+        # Use the HTTP method, URL, and HTTP version as an identifier for this request
         requestId = requestText.split("\n")[0]
+        # And if the request is cached...
         if requestId in cache:
+            # Send the cached request to the client
             client.sendall(cache[requestId])
 
             # Stats
@@ -188,15 +208,21 @@ def forwardConnection(client, addr, mmc):
         else:
             # Make the HTTP request
             response = ""
+            # First, we need to send the HTTP request to the server
             serversock.sendall(requestText.encode())
+            # Listen for data until...
             stillreceiving = True
             while stillreceiving:
                 try:
                     data = serversock.recv(BUFF_SIZE)
+                    # No more data is received or
                     if data == b'':
                         stillreceiving = False
                     else:
+                        # Record the new data
                         response += data.decode('ISO-8859-1')
+                    # Alternate stopping condition: we reached the end
+                    # of the rerquest
                     if data.decode('ISO-8859-1').endswith('\r\n\r\n'):
                         stillreceiving = False
                 except BlockingIOError:
