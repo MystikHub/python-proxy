@@ -1,7 +1,9 @@
 # Python proxy
 A simple proxy written in python, submission for a college assignment
 
-To start the server, run `python proxy.py`.
+First, install the depencencies (just npyscreen) with `pip install -r requirements.txt`
+
+To start the server, run `python console.py`.
 
 Features:
 - Easy to use terminal user interface
